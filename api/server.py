@@ -9,17 +9,15 @@ import sqlite3
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 
 # Ensure project root is on path for analyzer import
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 DB_PATH = ROOT / "data" / "observability.db"
-TEMPLATES_DIR = ROOT / "templates"
+INDEX_HTML = ROOT / "templates" / "index.html"
 
 app = FastAPI(title="Claude Code Observability", docs_url=None, redoc_url=None)
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -42,8 +40,8 @@ def rows_to_list(rows) -> list:
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+async def dashboard():
+    return HTMLResponse(INDEX_HTML.read_text(encoding="utf-8"))
 
 
 @app.get("/api/overview")
