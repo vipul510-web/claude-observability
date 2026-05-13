@@ -146,15 +146,20 @@ async def session_detail(session_id: str):
             (session_id,)
         ).fetchall()
 
-        # Per-session analysis
+        user_messages = conn.execute(
+            "SELECT * FROM user_messages WHERE session_id = ? ORDER BY msg_index",
+            (session_id,)
+        ).fetchall()
+
         from analysis.analyzer import analyze_session
         issues = analyze_session(dict(s), rows_to_list(api_calls), rows_to_list(tool_calls))
 
         return {
-            "session":   dict(s),
-            "api_calls": rows_to_list(api_calls),
-            "tool_calls":rows_to_list(tool_calls),
-            "issues":    issues,
+            "session":       dict(s),
+            "api_calls":     rows_to_list(api_calls),
+            "tool_calls":    rows_to_list(tool_calls),
+            "user_messages": rows_to_list(user_messages),
+            "issues":        issues,
         }
     finally:
         conn.close()

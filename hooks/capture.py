@@ -6,20 +6,18 @@ Uses ONLY stdlib so it works with any Python 3.8+ without a venv.
 Called by Claude Code hooks as:
   python capture.py stop       (Stop hook)
   python capture.py post_tool  (PostToolUse hook)
-  python capture.py pre_tool   (PreToolUse hook)
 """
 
 import sys
 import json
 import sqlite3
-import os
 from pathlib import Path
 from datetime import datetime, timezone
 
-DB_PATH = Path(__file__).parent.parent / "data" / "observability.db"
+DB_PATH   = Path(__file__).parent.parent / "data" / "observability.db"
 ERROR_LOG = Path(__file__).parent.parent / "data" / "errors.log"
 
-# ── Pricing table (per token) ────────────────────────────────────────────────
+# ── Pricing ───────────────────────────────────────────────────────────────────
 
 PRICING = {
     "claude-opus-4-7":          {"input": 15.0/1e6,  "output": 75.0/1e6,  "cache_write": 18.75/1e6, "cache_read": 1.50/1e6},
@@ -44,14 +42,14 @@ def get_pricing(model: str) -> dict:
 def calc_cost(input_tokens, output_tokens, cache_creation, cache_read, model) -> float:
     p = get_pricing(model)
     return (
-        input_tokens     * p["input"] +
-        output_tokens    * p["output"] +
-        cache_creation   * p["cache_write"] +
-        cache_read       * p["cache_read"]
+        input_tokens   * p["input"] +
+        output_tokens  * p["output"] +
+        cache_creation * p["cache_write"] +
+        cache_read     * p["cache_read"]
     )
 
 
-# ── Database setup ────────────────────────────────────────────────────────────
+# ── Schema ────────────────────────────────────────────────────────────────────
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -85,15 +83,31 @@ CREATE TABLE IF NOT EXISTS api_calls (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
+CREATE TABLE IF NOT EXISTS user_messages (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        TEXT,
+    msg_index         INTEGER,
+    api_call_index    INTEGER,
+    timestamp         TEXT,
+    prompt_preview    TEXT,
+    prompt_length     INTEGER DEFAULT 0,
+    has_tool_results  INTEGER DEFAULT 0,
+    tool_result_count INTEGER DEFAULT 0,
+    token_delta       INTEGER DEFAULT 0,
+    cumulative_input  INTEGER DEFAULT 0,
+    is_first          INTEGER DEFAULT 0,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
 CREATE TABLE IF NOT EXISTS tool_calls (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id          TEXT,
-    timestamp           TEXT,
-    tool_name           TEXT,
-    tool_input_json     TEXT,
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id            TEXT,
+    timestamp             TEXT,
+    tool_name             TEXT,
+    tool_input_json       TEXT,
     tool_response_preview TEXT,
-    input_size          INTEGER DEFAULT 0,
-    response_size       INTEGER DEFAULT 0,
+    input_size            INTEGER DEFAULT 0,
+    response_size         INTEGER DEFAULT 0,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
@@ -119,9 +133,15 @@ def open_db() -> sqlite3.Connection:
 
 # ── Transcript parser ─────────────────────────────────────────────────────────
 
-def parse_transcript(path: str) -> list:
-    """Parse a .jsonl transcript file and return a list of API call records."""
-    calls = []
+def parse_transcript(path: str):
+    """
+    Parse a JSONL transcript. Returns (api_calls, user_messages).
+
+    api_calls:     one record per assistant turn with token usage
+    user_messages: one record per user turn with token delta = how much this
+                   turn added to the context window
+    """
+    entries = []
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -129,30 +149,102 @@ def parse_transcript(path: str) -> list:
                 if not line:
                     continue
                 try:
-                    entry = json.loads(line)
+                    entries.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
-
-                if entry.get("type") != "assistant":
-                    continue
-
-                msg = entry.get("message", {})
-                usage = msg.get("usage", {})
-                if not usage:
-                    continue
-
-                calls.append({
-                    "timestamp":          entry.get("timestamp", ""),
-                    "model":              msg.get("model", ""),
-                    "stop_reason":        msg.get("stop_reason", ""),
-                    "input_tokens":       int(usage.get("input_tokens", 0)),
-                    "output_tokens":      int(usage.get("output_tokens", 0)),
-                    "cache_creation":     int(usage.get("cache_creation_input_tokens", 0)),
-                    "cache_read":         int(usage.get("cache_read_input_tokens", 0)),
-                })
     except Exception:
-        pass
-    return calls
+        return [], []
+
+    api_calls     = []
+    user_messages = []
+
+    prev_input    = 0
+    api_call_idx  = 0
+    msg_idx       = 0
+    pending_user  = None  # last user message waiting for its paired assistant turn
+
+    for entry in entries:
+        etype = entry.get("type")
+
+        # ── User turn ────────────────────────────────────────────────────────
+        if etype == "user":
+            msg     = entry.get("message", {})
+            content = msg.get("content", [])
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+
+            text_parts        = []
+            has_tool_results  = False
+            tool_result_count = 0
+
+            for block in (content if isinstance(content, list) else []):
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type", "")
+
+                if btype == "text":
+                    text_parts.append(block.get("text", ""))
+
+                elif btype == "tool_result":
+                    has_tool_results = True
+                    tool_result_count += 1
+                    inner = block.get("content", [])
+                    if isinstance(inner, str):
+                        text_parts.append(f"[tool_result: {inner[:200]}]")
+                    elif isinstance(inner, list):
+                        for ib in inner:
+                            if isinstance(ib, dict) and ib.get("type") == "text":
+                                text_parts.append(f"[tool_result: {ib.get('text','')[:200]}]")
+
+            full_text = "\n".join(text_parts)
+
+            pending_user = {
+                "msg_index":        msg_idx,
+                "api_call_index":   None,
+                "timestamp":        entry.get("timestamp", ""),
+                "prompt_preview":   full_text[:600],
+                "prompt_length":    len(full_text),
+                "has_tool_results": has_tool_results,
+                "tool_result_count":tool_result_count,
+                "token_delta":      0,
+                "cumulative_input": 0,
+                "is_first":         msg_idx == 0,
+            }
+            user_messages.append(pending_user)
+            msg_idx += 1
+
+        # ── Assistant turn ────────────────────────────────────────────────────
+        elif etype == "assistant":
+            msg   = entry.get("message", {})
+            usage = msg.get("usage", {})
+            if not usage:
+                continue
+
+            input_tokens  = int(usage.get("input_tokens", 0))
+            output_tokens = int(usage.get("output_tokens", 0))
+            cache_create  = int(usage.get("cache_creation_input_tokens", 0))
+            cache_read    = int(usage.get("cache_read_input_tokens", 0))
+            token_delta   = input_tokens - prev_input
+            prev_input    = input_tokens
+
+            if pending_user is not None:
+                pending_user["api_call_index"]  = api_call_idx
+                pending_user["token_delta"]     = token_delta
+                pending_user["cumulative_input"]= input_tokens
+                pending_user = None
+
+            api_calls.append({
+                "timestamp":    entry.get("timestamp", ""),
+                "model":        msg.get("model", ""),
+                "stop_reason":  msg.get("stop_reason", ""),
+                "input_tokens": input_tokens,
+                "output_tokens":output_tokens,
+                "cache_creation": cache_create,
+                "cache_read":   cache_read,
+            })
+            api_call_idx += 1
+
+    return api_calls, user_messages
 
 
 # ── Event handlers ────────────────────────────────────────────────────────────
@@ -161,22 +253,19 @@ def handle_stop(event: dict, conn: sqlite3.Connection):
     session_id      = event.get("session_id", "unknown")
     transcript_path = event.get("transcript_path", "")
 
-    api_calls = parse_transcript(transcript_path) if transcript_path else []
+    api_calls, user_messages = parse_transcript(transcript_path) if transcript_path else ([], [])
 
-    total_input         = sum(c["input_tokens"]   for c in api_calls)
-    total_output        = sum(c["output_tokens"]  for c in api_calls)
-    total_cache_create  = sum(c["cache_creation"] for c in api_calls)
-    total_cache_read    = sum(c["cache_read"]     for c in api_calls)
-
-    model = next((c["model"] for c in reversed(api_calls) if c.get("model")), "")
-
-    total_cost = sum(
+    total_input        = sum(c["input_tokens"]   for c in api_calls)
+    total_output       = sum(c["output_tokens"]  for c in api_calls)
+    total_cache_create = sum(c["cache_creation"] for c in api_calls)
+    total_cache_read   = sum(c["cache_read"]     for c in api_calls)
+    model              = next((c["model"] for c in reversed(api_calls) if c.get("model")), "")
+    total_cost         = sum(
         calc_cost(c["input_tokens"], c["output_tokens"],
                   c["cache_creation"], c["cache_read"], c["model"])
         for c in api_calls
     )
 
-    # Derive project path from transcript path
     project_path = ""
     if transcript_path:
         try:
@@ -187,14 +276,17 @@ def handle_stop(event: dict, conn: sqlite3.Connection):
         except Exception:
             pass
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso    = datetime.now(timezone.utc).isoformat()
     started_at = api_calls[0]["timestamp"]  if api_calls else now_iso
     ended_at   = api_calls[-1]["timestamp"] if api_calls else now_iso
 
-    # Existing tool call count (captured by PostToolUse hooks)
     tool_count = conn.execute(
         "SELECT COUNT(*) FROM tool_calls WHERE session_id = ?", (session_id,)
     ).fetchone()[0]
+
+    # Clear stale per-session rows so re-processing is idempotent
+    conn.execute("DELETE FROM api_calls     WHERE session_id = ?", (session_id,))
+    conn.execute("DELETE FROM user_messages WHERE session_id = ?", (session_id,))
 
     conn.execute("""
         INSERT OR REPLACE INTO sessions
@@ -208,12 +300,11 @@ def handle_stop(event: dict, conn: sqlite3.Connection):
           total_input, total_output, total_cache_create, total_cache_read,
           len(api_calls), tool_count, model, total_cost, transcript_path))
 
-    # Insert per-call records (IGNORE duplicates on re-run)
     for i, c in enumerate(api_calls):
         cost = calc_cost(c["input_tokens"], c["output_tokens"],
                          c["cache_creation"], c["cache_read"], c["model"])
         conn.execute("""
-            INSERT OR IGNORE INTO api_calls
+            INSERT INTO api_calls
             (session_id, call_index, timestamp,
              input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
              model, stop_reason, estimated_cost_usd)
@@ -221,6 +312,19 @@ def handle_stop(event: dict, conn: sqlite3.Connection):
         """, (session_id, i, c["timestamp"],
               c["input_tokens"], c["output_tokens"], c["cache_creation"], c["cache_read"],
               c["model"], c["stop_reason"], cost))
+
+    for um in user_messages:
+        conn.execute("""
+            INSERT INTO user_messages
+            (session_id, msg_index, api_call_index, timestamp,
+             prompt_preview, prompt_length,
+             has_tool_results, tool_result_count,
+             token_delta, cumulative_input, is_first)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """, (session_id, um["msg_index"], um["api_call_index"], um["timestamp"],
+              um["prompt_preview"], um["prompt_length"],
+              int(um["has_tool_results"]), um["tool_result_count"],
+              um["token_delta"], um["cumulative_input"], int(um["is_first"])))
 
     conn.commit()
 
@@ -241,18 +345,9 @@ def handle_post_tool(event: dict, conn: sqlite3.Connection):
         VALUES (?,?,?,?,?,?,?)
     """, (session_id,
           datetime.now(timezone.utc).isoformat(),
-          tool_name,
-          input_json[:2000],
-          response_str[:1000],
-          len(input_json),
-          len(response_str)))
+          tool_name, input_json[:2000], response_str[:1000],
+          len(input_json), len(response_str)))
     conn.commit()
-
-
-def handle_pre_tool(event: dict, conn: sqlite3.Connection):
-    # Store start timestamp keyed by session for timing (best-effort)
-    # We just log the raw event; timing is approximated via response size
-    pass
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -274,13 +369,12 @@ def main():
         conn = open_db()
     except Exception as e:
         log_error(f"DB open failed: {e}")
-        sys.exit(0)  # Never block Claude Code
+        sys.exit(0)
 
     try:
-        event = json.loads(raw) if raw.strip() else {}
+        event      = json.loads(raw) if raw.strip() else {}
         session_id = event.get("session_id", "")
 
-        # Always log raw event
         conn.execute(
             "INSERT INTO raw_events (event_type, session_id, raw_data) VALUES (?,?,?)",
             (event_type, session_id, raw[:10000])
@@ -291,15 +385,13 @@ def main():
             handle_stop(event, conn)
         elif event_type == "post_tool":
             handle_post_tool(event, conn)
-        elif event_type == "pre_tool":
-            handle_pre_tool(event, conn)
 
     except Exception as e:
         log_error(f"[{event_type}] {e} | raw={raw[:200]}")
     finally:
         conn.close()
 
-    sys.exit(0)  # Always exit 0 so Claude Code continues normally
+    sys.exit(0)
 
 
 if __name__ == "__main__":

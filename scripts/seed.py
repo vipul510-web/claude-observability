@@ -23,12 +23,17 @@ def seed():
     imported = 0
     skipped  = 0
 
+    force = "--force" in sys.argv
+
     for transcript in sorted(projects_dir.rglob("*.jsonl")):
         session_id = transcript.stem
+        has_msgs = conn.execute(
+            "SELECT COUNT(*) FROM user_messages WHERE session_id=?", (session_id,)
+        ).fetchone()[0]
         existing = conn.execute(
             "SELECT id FROM sessions WHERE id=?", (session_id,)
         ).fetchone()
-        if existing:
+        if existing and has_msgs and not force:
             skipped += 1
             continue
 
