@@ -165,6 +165,62 @@ async def session_detail(session_id: str):
         conn.close()
 
 
+@app.get("/api/monthly")
+async def monthly():
+    """Current-month usage stats for Pro/Max plan users."""
+    import calendar as cal_mod
+    conn = get_db()
+    empty = {
+        "sessions_this_month": 0, "tokens_consumed": 0,
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_creation": 0, "cache_read": 0,
+        "cost_this_month": 0.0, "days_elapsed": 1,
+        "days_in_month": 31, "calendar_days_left": 30,
+        "avg_tokens_per_day": 0, "month_label": "",
+    }
+    if conn is None:
+        return empty
+    try:
+        today = datetime.now().date()
+        month_start = today.replace(day=1).isoformat()
+        days_in_month = cal_mod.monthrange(today.year, today.month)[1]
+        days_elapsed = today.day
+        calendar_days_left = days_in_month - days_elapsed
+
+        row = conn.execute("""
+            SELECT
+                COUNT(*) AS sessions,
+                COALESCE(SUM(total_input_tokens), 0)          AS inp,
+                COALESCE(SUM(total_output_tokens), 0)         AS out,
+                COALESCE(SUM(total_cache_creation_tokens), 0) AS cc,
+                COALESCE(SUM(total_cache_read_tokens), 0)     AS cr,
+                COALESCE(SUM(estimated_cost_usd), 0)          AS cost
+            FROM sessions
+            WHERE DATE(ended_at) >= ?
+        """, (month_start,)).fetchone()
+
+        # consumed = tokens that draw from your monthly plan allocation
+        consumed = (row["inp"] or 0) + (row["out"] or 0) + (row["cc"] or 0)
+        avg_per_day = consumed / max(days_elapsed, 1)
+
+        return {
+            "sessions_this_month": row["sessions"] or 0,
+            "tokens_consumed":     consumed,
+            "input_tokens":        row["inp"] or 0,
+            "output_tokens":       row["out"] or 0,
+            "cache_creation":      row["cc"] or 0,
+            "cache_read":          row["cr"] or 0,
+            "cost_this_month":     round(row["cost"] or 0, 4),
+            "days_elapsed":        days_elapsed,
+            "days_in_month":       days_in_month,
+            "calendar_days_left":  calendar_days_left,
+            "avg_tokens_per_day":  int(avg_per_day),
+            "month_label":         today.strftime("%B %Y"),
+        }
+    finally:
+        conn.close()
+
+
 @app.get("/api/tools")
 async def tools(limit: int = 15):
     conn = get_db()

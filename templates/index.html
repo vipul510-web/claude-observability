@@ -330,6 +330,62 @@
       pointer-events: none;
     }
 
+    /* ── Settings panel ── */
+    .settings-panel {
+      position: fixed; top: 56px; right: 16px; z-index: 150;
+      width: 300px;
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--r); box-shadow: 0 8px 32px rgba(0,0,0,.5);
+      padding: 16px;
+      animation: slideUp .15s ease;
+    }
+    .settings-title { font-size: 13px; font-weight: 600; margin-bottom: 14px; color: var(--text); }
+    .settings-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+    .plan-btn-group { display: flex; gap: 6px; margin-bottom: 14px; }
+    .plan-btn {
+      flex: 1; padding: 7px 0; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--text2); font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: all .15s; text-align: center;
+    }
+    .plan-btn:hover { border-color: var(--purple2); color: var(--text); }
+    .plan-btn.active { background: var(--purple2); border-color: var(--purple2); color: #fff; }
+    .budget-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .budget-input {
+      flex: 1; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); padding: 6px 10px;
+      font-size: 12px; outline: none;
+    }
+    .budget-input:focus { border-color: var(--purple2); }
+    .budget-presets { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+    .budget-preset {
+      padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border);
+      background: none; color: var(--text3); font-size: 11px; cursor: pointer;
+    }
+    .budget-preset:hover { color: var(--purple); border-color: var(--purple); }
+    .settings-note { font-size: 11px; color: var(--text3); line-height: 1.5; margin-top: 8px; }
+
+    /* ── Allowance bar card ── */
+    .allowance-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 20px;
+      grid-column: 1 / -1;
+    }
+    .allowance-bar-wrap { height: 8px; background: var(--bg4); border-radius: 4px; overflow: hidden; margin: 10px 0 6px; }
+    .allowance-bar-fill { height: 100%; border-radius: 4px; transition: width .4s; }
+    .allowance-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text3); }
+
+    /* ── Tips list ── */
+    .tips-list { list-style: none; padding: 0; }
+    .tips-list li {
+      display: flex; gap: 10px; padding: 10px 0;
+      border-bottom: 1px solid var(--border); font-size: 13px;
+    }
+    .tips-list li:last-child { border-bottom: none; }
+    .tip-icon { font-size: 16px; flex-shrink: 0; }
+    .tip-body { flex: 1; }
+    .tip-title { font-weight: 600; margin-bottom: 2px; }
+    .tip-desc  { color: var(--text2); font-size: 12px; line-height: 1.6; }
+
     /* ── Misc ── */
     .text-right { text-align: right; }
     .text-center { text-align: center; }
@@ -366,9 +422,43 @@
   <div class="nav-right">
     <div class="status-dot" id="statusDot"></div>
     <span class="last-updated" id="lastUpdated">Loading…</span>
+    <span id="planBadge" class="badge badge-gray" style="font-size:11px;cursor:pointer" onclick="toggleSettings()">API</span>
     <button class="btn btn-ghost btn-sm" onclick="refreshAll()">↻ Refresh</button>
+    <button class="btn btn-ghost btn-sm" onclick="toggleSettings()" title="Plan settings" style="padding:6px 10px">⚙</button>
   </div>
 </nav>
+
+<!-- ── Settings panel ── -->
+<div id="settingsPanel" class="settings-panel hidden">
+  <div class="settings-title">Plan / Usage Mode</div>
+
+  <div class="settings-label">Your plan</div>
+  <div class="plan-btn-group">
+    <button class="plan-btn" id="btn-pro" onclick="setPlan('pro')">Pro<br><span style="font-size:10px;opacity:.7">$20/mo</span></button>
+    <button class="plan-btn" id="btn-max" onclick="setPlan('max')">Max<br><span style="font-size:10px;opacity:.7">$200/mo</span></button>
+    <button class="plan-btn active" id="btn-api" onclick="setPlan('api')">API<br><span style="font-size:10px;opacity:.7">Enterprise</span></button>
+  </div>
+
+  <div id="budgetSection" class="hidden">
+    <div class="settings-label">Monthly token budget</div>
+    <div class="budget-presets">
+      <button class="budget-preset" onclick="applyBudget(45e6)">45M (Pro est.)</button>
+      <button class="budget-preset" onclick="applyBudget(225e6)">225M (Max est.)</button>
+      <button class="budget-preset" onclick="applyBudget(500e6)">500M</button>
+    </div>
+    <div class="budget-row">
+      <input type="number" id="budgetInput" class="budget-input" placeholder="tokens / month" min="1000000" step="1000000">
+      <button class="btn btn-primary btn-sm" onclick="saveBudget()">Save</button>
+    </div>
+    <div class="settings-note">
+      Anthropic doesn't publish exact plan limits. Use the presets as starting estimates and adjust based on your experience.
+    </div>
+  </div>
+
+  <div id="apiNote" style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.6">
+    API mode shows per-token costs and spend. Switch to Pro or Max if you're on a Claude.ai subscription.
+  </div>
+</div>
 
 <!-- ── Main ───────────────────────────────────────────────────────────────── -->
 <div class="container">
@@ -458,7 +548,7 @@
               <th>Input</th>
               <th>Output</th>
               <th>Cache Read</th>
-              <th>Cost</th>
+              <th class="col-cost">Cost</th>
               <th></th>
             </tr>
           </thead>
@@ -479,6 +569,33 @@
 
   <!-- ── Analysis tab ── -->
   <div id="tab-analysis" class="tab-pane">
+
+    <!-- Pro/Max: remaining allowance panel (hidden for API mode) -->
+    <div id="allowancePanel" class="card mb-4 hidden">
+      <div class="card-header">
+        <span class="card-title" id="allowanceTitle">Monthly Allowance</span>
+        <span style="font-size:11px;color:var(--text3)" id="allowanceMonth"></span>
+      </div>
+      <div class="card-body">
+        <div id="allowanceBody">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Pro/Max: tips for stretching remaining tokens (hidden for API mode) -->
+    <div id="tipsPanel" class="card mb-4 hidden">
+      <div class="card-header"><span class="card-title">Make your remaining tokens last</span></div>
+      <div class="card-body">
+        <ul class="tips-list">
+          <li><span class="tip-icon">⚡</span><div class="tip-body"><div class="tip-title">Use /compact mid-session</div><div class="tip-desc">When a session grows long, type <code>/compact</code> in the Claude Code prompt. It summarises the history and resets context — often cutting subsequent call sizes by 50–70%.</div></div></li>
+          <li><span class="tip-icon">🎯</span><div class="tip-body"><div class="tip-title">One task per session</div><div class="tip-desc">Each new Claude Code invocation starts with a fresh context. Avoid doing 10 unrelated things in one session — the accumulated history inflates every subsequent call.</div></div></li>
+          <li><span class="tip-icon">✂️</span><div class="tip-body"><div class="tip-title">Truncate tool outputs</div><div class="tip-desc">Pipe Bash results through <code>| head -50</code> or <code>| grep pattern</code>. Every byte a tool returns gets re-sent on every future call in the same session.</div></div></li>
+          <li><span class="tip-icon">📄</span><div class="tip-body"><div class="tip-title">Read files with line ranges</div><div class="tip-desc">Instead of reading an entire file, ask Claude to read specific sections: "read lines 20–80 of config.py". The Read tool supports offset/limit to avoid pulling in irrelevant content.</div></div></li>
+          <li><span class="tip-icon">🧠</span><div class="tip-body"><div class="tip-title">CLAUDE.md = free cache</div><div class="tip-desc">Your CLAUDE.md files are cached across all calls in a session. At 99.9% cache hit rate, yours is already excellent — keep it up. This is what makes Pro/Max plans stretch so far.</div></div></li>
+          <li><span class="tip-icon">💬</span><div class="tip-body"><div class="tip-title">Be precise in prompts</div><div class="tip-desc">Vague prompts lead to back-and-forth. A precise prompt with context ("Fix the TypeError on line 42 of api/server.py — it's failing because X") costs fewer total tokens than 3 rounds of clarification.</div></div></li>
+        </ul>
+      </div>
+    </div>
+
     <div class="grid-2 mb-4">
       <!-- Efficiency score -->
       <div class="card">
@@ -679,6 +796,74 @@ let currentPage = 1;
 let searchQuery = '';
 let searchTimer = null;
 let trendChart = null, distChart = null, modelChart = null, scoreChart = null, ctxChart = null;
+let _lastMonthly = null; // cached for analysis tab
+
+// ── Plan management ───────────────────────────────────────────────────────────
+function getPlan()   { return localStorage.getItem('obs_plan')   || 'api'; }
+function getBudget() { return parseInt(localStorage.getItem('obs_budget') || '45000000'); }
+
+function setPlan(p) {
+  localStorage.setItem('obs_plan', p);
+  updatePlanUI();
+  refreshAll();
+  // don't close panel — let user set budget too
+}
+
+function applyBudget(n) {
+  document.getElementById('budgetInput').value = n;
+}
+
+function saveBudget() {
+  const v = parseInt(document.getElementById('budgetInput').value);
+  if (v > 0) {
+    localStorage.setItem('obs_budget', String(v));
+    document.getElementById('settingsPanel').classList.add('hidden');
+    refreshAll();
+  }
+}
+
+function toggleSettings() {
+  const p = document.getElementById('settingsPanel');
+  p.classList.toggle('hidden');
+}
+
+function updatePlanUI() {
+  const plan = getPlan();
+  ['pro','max','api'].forEach(p => {
+    document.getElementById('btn-' + p).classList.toggle('active', p === plan);
+  });
+  const budgetSection = document.getElementById('budgetSection');
+  const apiNote       = document.getElementById('apiNote');
+  budgetSection.classList.toggle('hidden', plan === 'api');
+  apiNote.classList.toggle('hidden', plan !== 'api');
+
+  if (plan !== 'api') {
+    document.getElementById('budgetInput').value = getBudget();
+  }
+
+  // Update plan badge in navbar
+  const badge = document.getElementById('planBadge');
+  const labels = { pro: 'Pro', max: 'Max', api: 'API' };
+  const badgeClasses = { pro: 'badge-blue', max: 'badge-purple', api: 'badge-gray' };
+  badge.textContent = labels[plan] || 'API';
+  badge.className = 'badge ' + (badgeClasses[plan] || 'badge-gray');
+  badge.style.cursor = 'pointer';
+  badge.style.fontSize = '11px';
+
+  // Sessions table cost column visibility
+  const costCols = document.querySelectorAll('.col-cost');
+  costCols.forEach(el => el.style.display = plan === 'api' ? '' : 'none');
+}
+
+// Close settings when clicking outside
+document.addEventListener('click', e => {
+  const panel = document.getElementById('settingsPanel');
+  if (!panel.classList.contains('hidden') &&
+      !panel.contains(e.target) &&
+      !e.target.closest('[onclick="toggleSettings()"]')) {
+    panel.classList.add('hidden');
+  }
+});
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function showTab(name) {
@@ -699,32 +884,29 @@ function showTab(name) {
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 async function loadOverview() {
-  const [ov, trends, tools, models] = await Promise.all([
-    api('/api/overview'), api('/api/trends'), api('/api/tools'), api('/api/models'),
-  ]);
+  const plan = getPlan();
+  const fetches = [api('/api/overview'), api('/api/trends'), api('/api/tools'), api('/api/models')];
+  if (plan !== 'api') fetches.push(api('/api/monthly'));
 
-  renderStatCards(ov);
+  const [ov, trends, tools, models, monthly] = await Promise.all(fetches);
+  _lastMonthly = monthly || null;
+
+  renderStatCards(ov, monthly);
   renderTrend(trends.trends || []);
   renderDist(ov);
   renderTools(tools.tools || []);
-  renderModels(models.models || []);
+  renderModels(models.models || [], plan);
 
   const now = new Date().toLocaleTimeString();
   document.getElementById('lastUpdated').textContent = 'Updated ' + now;
 }
 
-function renderStatCards(ov) {
+// ── Stat cards — branches on plan ────────────────────────────────────────────
+function renderStatCards(ov, monthly) {
+  const plan   = getPlan();
+  const grid   = document.getElementById('statGrid');
   const noData = ov.no_data;
-  const cards = [
-    { label: 'Total Sessions',     value: fmt.num(ov.total_sessions),             sub: `${fmt.num(ov.sessions_today)} today`,   accent: 'purple' },
-    { label: 'Input Tokens',       value: fmt.tokens(ov.total_input_tokens),      sub: `+ ${fmt.tokens(ov.total_cache_read_tokens)} cache hits`, accent: 'blue' },
-    { label: 'Output Tokens',      value: fmt.tokens(ov.total_output_tokens),     sub: `across ${fmt.num(ov.total_api_calls)} API calls`, accent: 'blue' },
-    { label: 'Cache Hit Rate',     value: fmt.pct(ov.cache_efficiency_pct),       sub: `${fmt.tokens(ov.total_cache_read_tokens)} tokens from cache`, accent: ov.cache_efficiency_pct >= 30 ? 'green' : 'yellow' },
-    { label: 'Estimated Cost',     value: fmt.cost(ov.total_estimated_cost_usd),  sub: `${fmt.cost(ov.cost_today)} today`,      accent: 'red' },
-    { label: 'Tool Calls',         value: fmt.num(ov.total_tool_calls),           sub: `across all sessions`,                   accent: 'purple' },
-  ];
 
-  const grid = document.getElementById('statGrid');
   if (noData) {
     grid.innerHTML = `
       <div class="empty-state" style="grid-column:1/-1">
@@ -736,7 +918,75 @@ function renderStatCards(ov) {
     return;
   }
 
+  if (plan === 'api') {
+    renderApiCards(ov, grid);
+  } else {
+    renderProMaxCards(ov, monthly, plan, grid);
+  }
+}
+
+function renderApiCards(ov, grid) {
+  const cards = [
+    { label: 'Total Sessions',  value: fmt.num(ov.total_sessions),            sub: `${fmt.num(ov.sessions_today)} today`,                   accent: 'purple' },
+    { label: 'Input Tokens',    value: fmt.tokens(ov.total_input_tokens),     sub: `+ ${fmt.tokens(ov.total_cache_read_tokens)} cache hits`, accent: 'blue' },
+    { label: 'Output Tokens',   value: fmt.tokens(ov.total_output_tokens),    sub: `across ${fmt.num(ov.total_api_calls)} API calls`,        accent: 'blue' },
+    { label: 'Cache Hit Rate',  value: fmt.pct(ov.cache_efficiency_pct),      sub: `${fmt.tokens(ov.total_cache_read_tokens)} from cache`,   accent: ov.cache_efficiency_pct >= 30 ? 'green' : 'yellow' },
+    { label: 'Total Spend',     value: fmt.cost(ov.total_estimated_cost_usd), sub: `${fmt.cost(ov.cost_today)} today`,                       accent: 'red' },
+    { label: 'Tool Calls',      value: fmt.num(ov.total_tool_calls),          sub: `across all sessions`,                                    accent: 'purple' },
+  ];
   grid.innerHTML = cards.map(c => `
+    <div class="stat-card stat-accent-${c.accent}">
+      <div class="stat-label">${c.label}</div>
+      <div class="stat-value">${c.value}</div>
+      <div class="stat-sub">${c.sub}</div>
+    </div>`).join('');
+}
+
+function renderProMaxCards(ov, monthly, plan, grid) {
+  const budget   = getBudget();
+  const consumed = monthly ? (monthly.tokens_consumed || 0) : 0;
+  const remaining= Math.max(0, budget - consumed);
+  const pctUsed  = budget > 0 ? consumed / budget : 0;
+  const pctLeft  = 1 - pctUsed;
+  const avgPerDay= monthly ? (monthly.avg_tokens_per_day || 1) : 1;
+  const daysLeft = avgPerDay > 0 ? Math.floor(remaining / avgPerDay) : 999;
+  const calLeft  = monthly ? (monthly.calendar_days_left || 0) : 0;
+  const monthLbl = monthly ? monthly.month_label : '';
+  const sessions = monthly ? (monthly.sessions_this_month || 0) : 0;
+
+  // colors
+  const remAccent = pctLeft > 0.4 ? 'green' : pctLeft > 0.15 ? 'yellow' : 'red';
+  const daysAccent= daysLeft > calLeft ? 'green' : daysLeft > calLeft * 0.5 ? 'yellow' : 'red';
+  const barColor  = pctLeft > 0.4 ? '#3fb950' : pctLeft > 0.15 ? '#d29922' : '#f85149';
+
+  const barPct = Math.min(100, Math.round(pctUsed * 100));
+
+  // allowance bar card (full width)
+  const allowCard = `
+    <div class="allowance-card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+        <span style="font-size:13px;font-weight:600">${monthLbl} usage</span>
+        <span style="font-size:13px;font-weight:700;color:${barColor}">${fmt.tokens(consumed)} <span style="color:var(--text3);font-weight:400">of ${fmt.tokens(budget)}</span></span>
+      </div>
+      <div class="allowance-bar-wrap">
+        <div class="allowance-bar-fill" style="width:${barPct}%;background:${barColor}"></div>
+      </div>
+      <div class="allowance-meta">
+        <span>${barPct}% used · ${sessions} sessions</span>
+        <span>${fmt.tokens(remaining)} remaining</span>
+      </div>
+    </div>`;
+
+  const cards = [
+    { label: 'Tokens Remaining',   value: fmt.tokens(remaining),            sub: `${(pctLeft*100).toFixed(0)}% of ${plan === 'max' ? 'Max' : 'Pro'} plan`,  accent: remAccent },
+    { label: 'Daily Burn Rate',    value: fmt.tokens(avgPerDay) + '/day',   sub: `avg over ${monthly?.days_elapsed||0} days`,                               accent: 'blue' },
+    { label: 'Days Left at Pace',  value: daysLeft > 365 ? '∞' : `~${daysLeft}d`, sub: `${calLeft} calendar days left in month`,                            accent: daysAccent },
+    { label: 'Cache Hit Rate',     value: fmt.pct(ov.cache_efficiency_pct), sub: 'tokens served from cache — keeps usage low',                               accent: ov.cache_efficiency_pct >= 30 ? 'green' : 'yellow' },
+    { label: 'Sessions This Month',value: fmt.num(sessions),                sub: `${fmt.num(ov.total_tool_calls)} tool calls total`,                         accent: 'purple' },
+    { label: 'API Calls',          value: fmt.num(ov.total_api_calls),      sub: `${fmt.tokens(ov.total_output_tokens)} output tokens`,                      accent: 'purple' },
+  ];
+
+  grid.innerHTML = allowCard + cards.map(c => `
     <div class="stat-card stat-accent-${c.accent}">
       <div class="stat-label">${c.label}</div>
       <div class="stat-value">${c.value}</div>
@@ -816,30 +1066,48 @@ function renderTools(tools) {
     </div>`).join('');
 }
 
-function renderModels(models) {
+function renderModels(models, plan) {
   if (!models.length) {
     document.getElementById('modelsBody').innerHTML = '<div class="text-muted">No data yet.</div>';
     return;
   }
-  const labels = models.map(m => m.model || 'unknown');
-  const costs  = models.map(m => parseFloat(m.cost || 0));
+  const labels = models.map(m => (m.model || 'unknown').replace('claude-',''));
   const colors = ['#a855f7','#58a6ff','#3fb950','#d29922','#f85149'];
   if (modelChart) modelChart.destroy();
-  modelChart = new Chart(document.getElementById('modelChart'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{ data: costs, backgroundColor: labels.map((_,i) => colors[i % colors.length]), borderRadius: 4 }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' $' + ctx.parsed.x.toFixed(4) } } },
-      scales: {
-        x: { grid: { color: '#21262d' }, ticks: { callback: v => '$' + v.toFixed(3), font: { size: 10 } } },
-        y: { grid: { display: false }, ticks: { font: { size: 10 } } },
+
+  if (plan !== 'api') {
+    // Pro/Max: show sessions per model instead of cost
+    const vals = models.map(m => m.sessions || 0);
+    modelChart = new Chart(document.getElementById('modelChart'), {
+      type: 'bar',
+      data: { labels, datasets: [{ data: vals, backgroundColor: labels.map((_,i) => colors[i%colors.length]), borderRadius: 4 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + ctx.parsed.x + ' sessions' } } },
+        scales: {
+          x: { grid: { color: '#21262d' }, ticks: { font: { size: 10 } } },
+          y: { grid: { display: false }, ticks: { font: { size: 10 } } },
+        },
       },
-    },
-  });
+    });
+    document.querySelector('.card-header + .card-body .card-title') // update title
+    document.getElementById('modelsBody').previousElementSibling &&
+      (document.getElementById('modelsBody').closest('.card').querySelector('.card-title').textContent = 'Sessions by Model');
+  } else {
+    const costs = models.map(m => parseFloat(m.cost || 0));
+    modelChart = new Chart(document.getElementById('modelChart'), {
+      type: 'bar',
+      data: { labels, datasets: [{ data: costs, backgroundColor: labels.map((_,i) => colors[i%colors.length]), borderRadius: 4 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' $' + ctx.parsed.x.toFixed(4) } } },
+        scales: {
+          x: { grid: { color: '#21262d' }, ticks: { callback: v => '$' + v.toFixed(3), font: { size: 10 } } },
+          y: { grid: { display: false }, ticks: { font: { size: 10 } } },
+        },
+      },
+    });
+  }
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
@@ -869,7 +1137,7 @@ async function loadSessions(page = 1) {
           <td class="text-right text-purple">${fmt.tokens(s.total_input_tokens)}</td>
           <td class="text-right" style="color:var(--blue)">${fmt.tokens(s.total_output_tokens)}</td>
           <td class="text-right"><span class="badge ${badge}">${fmt.tokens(s.total_cache_read_tokens)}</span></td>
-          <td class="text-right text-red">${fmt.cost(s.estimated_cost_usd)}</td>
+          <td class="text-right text-red col-cost">${fmt.cost(s.estimated_cost_usd)}</td>
           <td><button class="btn btn-ghost btn-sm" onclick="openSession('${s.id}')">Detail →</button></td>
         </tr>`;
     }).join('');
@@ -895,13 +1163,75 @@ function debounceSearch(val) {
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
 async function loadAnalysis() {
-  const data = await api('/api/analysis');
+  const plan = getPlan();
+  const fetches = [api('/api/analysis')];
+  if (plan !== 'api' && !_lastMonthly) fetches.push(api('/api/monthly'));
+
+  const [data, freshMonthly] = await Promise.all(fetches);
+  if (freshMonthly) _lastMonthly = freshMonthly;
+
   document.getElementById('issuesList').dataset.loaded = '1';
 
+  // Show/hide Pro/Max panels
+  const isProMax = plan !== 'api';
+  document.getElementById('allowancePanel').classList.toggle('hidden', !isProMax);
+  document.getElementById('tipsPanel').classList.toggle('hidden', !isProMax);
+
+  if (isProMax && _lastMonthly) {
+    renderAllowancePanel(_lastMonthly, plan);
+  }
+
   renderScore(data.score || {});
-  renderSavings(data.summary || {});
+  renderSavings(data.summary || {}, plan);
   renderIssues(data.issues || []);
-  renderSuggestions(data.suggestions || []);
+  renderSuggestions(data.suggestions || [], plan);
+}
+
+function renderAllowancePanel(monthly, plan) {
+  const budget    = getBudget();
+  const consumed  = monthly.tokens_consumed || 0;
+  const remaining = Math.max(0, budget - consumed);
+  const pctUsed   = budget > 0 ? Math.min(100, (consumed / budget * 100)) : 0;
+  const avgPerDay = monthly.avg_tokens_per_day || 1;
+  const daysLeft  = avgPerDay > 0 ? Math.floor(remaining / avgPerDay) : 999;
+  const calLeft   = monthly.calendar_days_left || 0;
+  const pctLeft   = 1 - pctUsed / 100;
+  const barColor  = pctLeft > 0.4 ? '#3fb950' : pctLeft > 0.15 ? '#d29922' : '#f85149';
+
+  document.getElementById('allowanceMonth').textContent = monthly.month_label || '';
+
+  let statusMsg = '';
+  if (daysLeft > calLeft + 5) statusMsg = `<span style="color:var(--green);font-weight:500">✓ On track — you have more than enough for the rest of the month.</span>`;
+  else if (daysLeft > calLeft) statusMsg = `<span style="color:var(--yellow);font-weight:500">⚠ Getting close — ${daysLeft} days of tokens left, ${calLeft} calendar days remain.</span>`;
+  else statusMsg = `<span style="color:var(--red);font-weight:500">⚡ High usage — at this pace you'll hit your limit in ~${daysLeft} days. ${calLeft} calendar days left.</span>`;
+
+  document.getElementById('allowanceBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:16px">
+      <div>
+        <div class="stat-label">Consumed</div>
+        <div style="font-size:22px;font-weight:700">${fmt.tokens(consumed)}</div>
+        <div style="font-size:11px;color:var(--text3)">${pctUsed.toFixed(1)}% of ${fmt.tokens(budget)} budget</div>
+      </div>
+      <div>
+        <div class="stat-label">Remaining</div>
+        <div style="font-size:22px;font-weight:700;color:${barColor}">${fmt.tokens(remaining)}</div>
+        <div style="font-size:11px;color:var(--text3)">${(pctLeft*100).toFixed(0)}% left</div>
+      </div>
+      <div>
+        <div class="stat-label">Burn rate</div>
+        <div style="font-size:22px;font-weight:700">${fmt.tokens(avgPerDay)}<span style="font-size:14px;font-weight:400;color:var(--text2)">/day</span></div>
+        <div style="font-size:11px;color:var(--text3)">${monthly.days_elapsed} days of data</div>
+      </div>
+      <div>
+        <div class="stat-label">Days at this pace</div>
+        <div style="font-size:22px;font-weight:700;color:${daysLeft > calLeft ? 'var(--green)' : daysLeft > 5 ? 'var(--yellow)' : 'var(--red)'}">${daysLeft > 365 ? '∞' : '~' + daysLeft + 'd'}</div>
+        <div style="font-size:11px;color:var(--text3)">${calLeft} calendar days left</div>
+      </div>
+    </div>
+    <div class="allowance-bar-wrap" style="height:10px">
+      <div class="allowance-bar-fill" style="width:${pctUsed}%;background:${barColor}"></div>
+    </div>
+    <div class="allowance-meta" style="margin-top:8px">${statusMsg}</div>`;
 }
 
 function renderScore(score) {
@@ -943,38 +1273,44 @@ function renderScore(score) {
     </div>`).join('');
 }
 
-function renderSavings(summary) {
-  const el = document.getElementById('savingsSummary');
+function renderSavings(summary, plan) {
+  const el    = document.getElementById('savingsSummary');
+  const card  = el.closest('.card');
+  const title = card.querySelector('.card-title');
+  const isApi = !plan || plan === 'api';
+
   if (!summary.total_sessions) {
     el.innerHTML = '<div class="text-muted">No data yet.</div>';
     return;
   }
+
   const wastePct = summary.potential_savings_pct || 0;
-  el.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-      <div>
-        <div class="stat-label">Sessions Analyzed</div>
-        <div style="font-size:22px;font-weight:700">${fmt.num(summary.total_sessions)}</div>
+  const cacheRate = summary.cache_hit_rate_pct || 0;
+
+  if (isApi) {
+    title.textContent = 'Savings Opportunity';
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div><div class="stat-label">Sessions Analyzed</div><div style="font-size:22px;font-weight:700">${fmt.num(summary.total_sessions)}</div></div>
+        <div><div class="stat-label">Cache Hit Rate</div><div style="font-size:22px;font-weight:700;color:${cacheRate >= 30 ? 'var(--green)' : 'var(--yellow)'}">${fmt.pct(cacheRate)}</div></div>
+        <div><div class="stat-label">Wasted Spend (est.)</div><div style="font-size:22px;font-weight:700;color:var(--red)">${fmt.cost(summary.estimated_waste_cost)}</div><div style="font-size:11px;color:var(--text3)">${fmt.tokens(summary.estimated_waste_tokens)} tokens</div></div>
+        <div><div class="stat-label">Savings Potential</div><div style="font-size:22px;font-weight:700;color:var(--green)">${wastePct}%</div><div style="font-size:11px;color:var(--text3)">of current spend</div></div>
       </div>
-      <div>
-        <div class="stat-label">Cache Hit Rate</div>
-        <div style="font-size:22px;font-weight:700;color:${(summary.cache_hit_rate_pct||0) >= 30 ? 'var(--green)' : 'var(--yellow)'}">${fmt.pct(summary.cache_hit_rate_pct)}</div>
+      <div class="progress" style="height:10px"><div class="progress-fill" style="width:${Math.min(wastePct,100)}%;background:linear-gradient(90deg,var(--green),var(--teal))"></div></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">Savings opportunity bar</div>`;
+  } else {
+    title.textContent = 'Token Efficiency';
+    const totalTok = summary.total_tokens || 0;
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div><div class="stat-label">Sessions Analyzed</div><div style="font-size:22px;font-weight:700">${fmt.num(summary.total_sessions)}</div></div>
+        <div><div class="stat-label">Cache Hit Rate</div><div style="font-size:22px;font-weight:700;color:${cacheRate >= 30 ? 'var(--green)' : 'var(--yellow)'}">${fmt.pct(cacheRate)}</div></div>
+        <div><div class="stat-label">Total Tokens</div><div style="font-size:22px;font-weight:700">${fmt.tokens(totalTok)}</div><div style="font-size:11px;color:var(--text3)">input + output + cache</div></div>
+        <div><div class="stat-label">Tokens Saveable</div><div style="font-size:22px;font-weight:700;color:var(--green)">${fmt.tokens(summary.estimated_waste_tokens)}</div><div style="font-size:11px;color:var(--text3)">via better caching</div></div>
       </div>
-      <div>
-        <div class="stat-label">Potential Waste</div>
-        <div style="font-size:22px;font-weight:700;color:var(--red)">${fmt.cost(summary.estimated_waste_cost)}</div>
-        <div style="font-size:11px;color:var(--text3)">${fmt.tokens(summary.estimated_waste_tokens)} tokens</div>
-      </div>
-      <div>
-        <div class="stat-label">Savings Potential</div>
-        <div style="font-size:22px;font-weight:700;color:var(--green)">${wastePct}%</div>
-        <div style="font-size:11px;color:var(--text3)">of current spend</div>
-      </div>
-    </div>
-    <div class="progress" style="height:10px">
-      <div class="progress-fill" style="width:${Math.min(wastePct,100)}%;background:linear-gradient(90deg,var(--green),var(--teal))"></div>
-    </div>
-    <div style="font-size:11px;color:var(--text3);margin-top:6px">Savings opportunity bar</div>`;
+      <div class="progress" style="height:10px"><div class="progress-fill" style="width:${Math.min(wastePct,100)}%;background:linear-gradient(90deg,var(--green),var(--teal))"></div></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">Token savings opportunity</div>`;
+  }
 }
 
 function renderIssues(issues) {
@@ -994,12 +1330,14 @@ function renderIssues(issues) {
     </div>`).join('');
 }
 
-function renderSuggestions(suggestions) {
+function renderSuggestions(suggestions, plan) {
   const el = document.getElementById('suggestionsList');
-  if (!suggestions.length) {
+  const isProMax = plan && plan !== 'api';
+  if (!suggestions.length && !isProMax) {
     el.innerHTML = '<div class="text-muted">No suggestions. Looking great!</div>';
     return;
   }
+  if (!suggestions.length) { el.innerHTML = ''; return; }
   el.innerHTML = suggestions.map(s => `
     <div class="suggestion-card">
       <div class="sug-header">
@@ -1197,12 +1535,15 @@ async function refreshAll() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+updatePlanUI();   // apply saved plan before first render
 refreshAll();
-setInterval(refreshAll, 60_000); // Auto-refresh every 60s
+setInterval(refreshAll, 60_000);
 
-// ESC to close modal
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModalDirect();
+  if (e.key === 'Escape') {
+    closeModalDirect();
+    document.getElementById('settingsPanel').classList.add('hidden');
+  }
 });
 </script>
 </body>
