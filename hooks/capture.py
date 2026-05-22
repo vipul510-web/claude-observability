@@ -8,8 +8,10 @@ Called by Claude Code hooks as:
   python capture.py post_tool  (PostToolUse hook)
 """
 
+import ast
 import sys
 import json
+import re
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
@@ -28,6 +30,99 @@ PRICING = {
     "claude-haiku-4-5-20251001":{"input": 0.80/1e6,  "output": 4.0/1e6,   "cache_write": 1.00/1e6,  "cache_read": 0.08/1e6},
 }
 DEFAULT_PRICING = {"input": 3.0/1e6, "output": 15.0/1e6, "cache_write": 3.75/1e6, "cache_read": 0.30/1e6}
+
+
+# ── Failure detection ─────────────────────────────────────────────────────────
+
+# Patterns safe to run against stderr (errors are unambiguous there)
+_FAIL_PATTERNS_STDERR = [
+    (re.compile(r'command not found',                    re.I), 'command_not_found'),
+    (re.compile(r'No such file or directory',            re.I), 'path_not_found'),
+    (re.compile(r'Permission denied',                    re.I), 'permission_denied'),
+    (re.compile(r'ModuleNotFoundError|No module named',  re.I), 'import_error'),
+    (re.compile(r'SyntaxError|IndentationError',         re.I), 'syntax_error'),
+    (re.compile(r'Traceback \(most recent call',         re.I), 'exception'),
+    (re.compile(r'[1-9]\d* failed',                      re.I), 'test_failure'),
+    (re.compile(r'\bFAILED\s+\S+\.py',                  re.I), 'test_failure'),
+    (re.compile(r'npm ERR!',                             re.I), 'npm_error'),
+    (re.compile(r'exit code [1-9]',                      re.I), 'nonzero_exit'),
+    (re.compile(r'\bError:',                             re.I), 'generic_error'),
+]
+
+# Strict patterns safe to match in stdout (truly unambiguous signals)
+_FAIL_PATTERNS_STDOUT = [
+    (re.compile(r'Traceback \(most recent call',         re.I), 'exception'),
+    (re.compile(r'ModuleNotFoundError|No module named',  re.I), 'import_error'),
+    (re.compile(r'SyntaxError|IndentationError',         re.I), 'syntax_error'),
+    (re.compile(r'npm ERR!',                             re.I), 'npm_error'),
+    (re.compile(r'[1-9]\d* failed',                      re.I), 'test_failure'),
+    (re.compile(r'\bFAILED\s+\S+\.py',                  re.I), 'test_failure'),
+]
+
+# Only classify tools that produce shell/runtime output
+_TOOL_CLASSIFY = {'Bash', 'bash', 'computer', 'mcp__', 'execute'}
+
+# Sentinel returned when response is a structured Bash dict with no extractable stderr
+_NO_STDERR = '__NO_STDERR__'
+
+
+def _split_bash_response(response: str) -> tuple:
+    """Return (stdout, stderr) from a Bash tool response.
+
+    Claude Code uses Python-dict format: {'stdout': '...', 'stderr': '...', ...}
+    Responses are stored truncated at 1000 chars so ast.literal_eval often fails.
+    We fall back to regex extraction, using _NO_STDERR sentinel when we can confirm
+    stderr is empty so callers know not to use broad patterns on stdout content.
+    """
+    # Fast path: full parseable dict
+    try:
+        d = ast.literal_eval(response)
+        if isinstance(d, dict):
+            return (d.get('stdout') or '', d.get('stderr') or '')
+    except Exception:
+        pass
+
+    # Structured but truncated: detect stderr field
+    r = response.strip()
+    if r.startswith("{'stdout'") or r.startswith('{"stdout"'):
+        # Try to extract non-empty stderr
+        m = re.search(r"['\"]stderr['\"]\s*:\s*['\"](.+?)['\"]", r, re.DOTALL)
+        if m and m.group(1).strip():
+            return ('', m.group(1))
+        # stderr key is present and empty (common case)
+        return (_NO_STDERR, '')
+
+    # Unstructured plain-text response
+    return ('', response)
+
+
+def detect_failure(response: str, tool_name: str = '') -> str | None:
+    """Return error_class string if response signals a failure, else None."""
+    if not response:
+        return None
+    if tool_name and not any(tool_name.startswith(t) for t in _TOOL_CLASSIFY):
+        return None
+
+    stdout, stderr = _split_bash_response(response)
+
+    # Non-empty stderr: match all patterns
+    if stderr.strip():
+        for pat, cls in _FAIL_PATTERNS_STDERR:
+            if pat.search(stderr):
+                return cls
+        return None
+
+    if stdout == _NO_STDERR:
+        # Structured response confirmed to have no stderr — no error
+        return None
+
+    # Plain-text or stdout-only: strict patterns only to avoid false positives
+    check = stdout if stdout.strip() else response
+    for pat, cls in _FAIL_PATTERNS_STDOUT:
+        if pat.search(check):
+            return cls
+
+    return None
 
 
 def get_pricing(model: str) -> dict:
@@ -108,6 +203,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     tool_response_preview TEXT,
     input_size            INTEGER DEFAULT 0,
     response_size         INTEGER DEFAULT 0,
+    is_failure            INTEGER DEFAULT 0,
+    error_class           TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
@@ -127,6 +224,15 @@ def open_db() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.executescript(SCHEMA)
+    # Migrate existing DBs that predate the failure columns
+    for ddl in [
+        "ALTER TABLE tool_calls ADD COLUMN is_failure INTEGER DEFAULT 0",
+        "ALTER TABLE tool_calls ADD COLUMN error_class TEXT",
+    ]:
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     return conn
 
@@ -338,15 +444,18 @@ def handle_post_tool(event: dict, conn: sqlite3.Connection):
     input_json   = json.dumps(tool_input) if isinstance(tool_input, dict) else str(tool_input)
     response_str = str(tool_response) if tool_response else ""
 
+    error_class = detect_failure(response_str[:2000], tool_name)
+    is_failure  = 1 if error_class else 0
+
     conn.execute("""
         INSERT INTO tool_calls
         (session_id, timestamp, tool_name, tool_input_json, tool_response_preview,
-         input_size, response_size)
-        VALUES (?,?,?,?,?,?,?)
+         input_size, response_size, is_failure, error_class)
+        VALUES (?,?,?,?,?,?,?,?,?)
     """, (session_id,
           datetime.now(timezone.utc).isoformat(),
           tool_name, input_json[:2000], response_str[:1000],
-          len(input_json), len(response_str)))
+          len(input_json), len(response_str), is_failure, error_class))
     conn.commit()
 
 

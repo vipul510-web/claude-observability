@@ -409,6 +409,33 @@
     .tool-name { width: 120px; font-size: 12px; color: var(--text2); flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tool-bar-wrap { flex: 1; }
     .tool-count { width: 48px; text-align: right; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+
+    /* Failure section */
+    .failure-kpi-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .failure-kpi {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 14px 16px;
+    }
+    .failure-kpi-val  { font-size: 24px; font-weight: 700; }
+    .failure-kpi-label{ font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }
+    .snippet {
+      font-family: "SF Mono","Fira Code",monospace;
+      font-size: 11px; color: var(--text3);
+      white-space: pre-wrap; word-break: break-all;
+      max-height: 36px; overflow: hidden;
+    }
+    .section-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 24px 0;
+    }
   </style>
 </head>
 <body>
@@ -455,6 +482,28 @@
     </div>
   </div>
 
+  <div id="offsetSection" class="hidden">
+    <div class="settings-label" style="margin-top:14px">
+      claude.ai offset
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)"> — tokens used outside Claude Code</span>
+    </div>
+    <div class="budget-presets">
+      <button class="budget-preset" onclick="applyOffset(0)">None</button>
+      <button class="budget-preset" onclick="applyOffset(5e6)">5M</button>
+      <button class="budget-preset" onclick="applyOffset(10e6)">10M</button>
+      <button class="budget-preset" onclick="applyOffset(20e6)">20M</button>
+    </div>
+    <div class="budget-row">
+      <input type="number" id="offsetInput" class="budget-input" placeholder="tokens (e.g. 5000000)" min="0" step="1000000">
+      <button class="btn btn-primary btn-sm" onclick="saveOffset()">Save</button>
+    </div>
+    <div class="settings-note">
+      Estimate how many tokens you've used on claude.ai this month and enter it here.
+      It will be added to your Claude Code usage to give a more accurate remaining-tokens figure.
+      Check <a href="https://claude.ai/settings" target="_blank" style="color:var(--blue)">claude.ai/settings</a> for guidance.
+    </div>
+  </div>
+
   <div id="apiNote" style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.6">
     API mode shows per-token costs and spend. Switch to Pro or Max if you're on a Claude.ai subscription.
   </div>
@@ -462,6 +511,26 @@
 
 <!-- ── Main ───────────────────────────────────────────────────────────────── -->
 <div class="container">
+
+  <!-- Scope warning (Pro/Max only) -->
+  <div id="scopeWarning" class="hidden" style="
+    background: rgba(210,153,34,.1); border: 1px solid rgba(210,153,34,.35);
+    border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;
+    display: flex; align-items: flex-start; gap: 12px;">
+    <span style="font-size:18px;flex-shrink:0">⚠</span>
+    <div style="font-size:13px;line-height:1.7">
+      <strong style="color:#d29922">Claude Code CLI only</strong> —
+      this dashboard captures sessions from the Claude Code terminal tool.
+      Your <strong>claude.ai browser/app</strong> usage and <strong>Claude desktop app</strong>
+      sessions are <em>not</em> tracked here, but they draw from the same monthly plan allowance.<br>
+      <span style="color:var(--text3)">
+        Use the <strong>claude.ai offset</strong> in ⚙ settings to manually subtract your web usage
+        and get an accurate remaining-tokens figure.
+        To check your real total, visit
+        <a href="https://claude.ai/settings" target="_blank" style="color:var(--blue)">claude.ai/settings</a>.
+      </span>
+    </div>
+  </div>
 
   <!-- Stat cards -->
   <div class="stat-grid" id="statGrid">
@@ -480,6 +549,124 @@
 
   <!-- ── Overview tab ── -->
   <div id="tab-overview" class="tab-pane active">
+
+    <!-- Failures & Loops section -->
+    <div id="failureSection">
+
+      <!-- KPI row -->
+      <div class="failure-kpi-row" id="failureKpis">
+        <div class="failure-kpi">
+          <div class="failure-kpi-val text-red" id="fkpi-total">—</div>
+          <div class="failure-kpi-label">Tool failures detected</div>
+        </div>
+        <div class="failure-kpi">
+          <div class="failure-kpi-val text-yellow" id="fkpi-loops">—</div>
+          <div class="failure-kpi-label">Sessions with loops (3+ repeats)</div>
+        </div>
+        <div class="failure-kpi">
+          <div class="failure-kpi-val text-purple" id="fkpi-waste-tokens">—</div>
+          <div class="failure-kpi-label">Tokens after first failure</div>
+        </div>
+        <div class="failure-kpi" style="border-color: rgba(248,81,73,.35)">
+          <div class="failure-kpi-val text-red" id="fkpi-waste-cost">—</div>
+          <div class="failure-kpi-label">Cost after first failure</div>
+        </div>
+      </div>
+
+      <div class="grid-2 mb-4">
+
+        <!-- Recent failures -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Recent Failures</span>
+            <span class="text-muted" style="font-size:11px">error detected in tool response</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th>Error</th>
+                  <th>Snippet</th>
+                  <th>Session</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody id="failuresTbody">
+                <tr><td colspan="5" class="text-center" style="padding:20px">
+                  <div class="flex items-center" style="justify-content:center;gap:8px">
+                    <div class="spinner"></div> Loading…
+                  </div>
+                </td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Loop detection -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Loop Detection</span>
+            <span class="text-muted" style="font-size:11px">same tool called 3+ times in one session</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th style="text-align:right">Calls</th>
+                  <th style="text-align:right">Failures</th>
+                  <th>Session</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody id="loopsTbody">
+                <tr><td colspan="5" class="text-center" style="padding:20px">
+                  <div class="flex items-center" style="justify-content:center;gap:8px">
+                    <div class="spinner"></div> Loading…
+                  </div>
+                </td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Waste breakdown per session -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <span class="card-title">Tokens burnt after first failure — by session</span>
+          <span class="text-muted" style="font-size:11px">API call tokens consumed after the session's first detected error</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Session</th>
+                <th>Project</th>
+                <th>First error</th>
+                <th>First failure at</th>
+                <th style="text-align:right">API calls after</th>
+                <th style="text-align:right">Tokens after</th>
+                <th style="text-align:right">Cost after</th>
+              </tr>
+            </thead>
+            <tbody id="wasteTbody">
+              <tr><td colspan="7" class="text-center" style="padding:20px">
+                <div class="flex items-center" style="justify-content:center;gap:8px">
+                  <div class="spinner"></div> Loading…
+                </div>
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <hr class="section-divider">
+
     <div class="grid-2 mb-4">
       <!-- Token trend -->
       <div class="card">
@@ -885,10 +1072,10 @@ function showTab(name) {
 // ── Overview ──────────────────────────────────────────────────────────────────
 async function loadOverview() {
   const plan = getPlan();
-  const fetches = [api('/api/overview'), api('/api/trends'), api('/api/tools'), api('/api/models')];
+  const fetches = [api('/api/overview'), api('/api/trends'), api('/api/tools'), api('/api/models'), api('/api/failures')];
   if (plan !== 'api') fetches.push(api('/api/monthly'));
 
-  const [ov, trends, tools, models, monthly] = await Promise.all(fetches);
+  const [ov, trends, tools, models, failData, monthly] = await Promise.all(fetches);
   _lastMonthly = monthly || null;
 
   renderStatCards(ov, monthly);
@@ -896,9 +1083,116 @@ async function loadOverview() {
   renderDist(ov);
   renderTools(tools.tools || []);
   renderModels(models.models || [], plan);
+  renderFailures(failData || {});
 
   const now = new Date().toLocaleTimeString();
   document.getElementById('lastUpdated').textContent = 'Updated ' + now;
+}
+
+// ── Failures & Loops ──────────────────────────────────────────────────────────
+function errorBadge(cls, label) {
+  const colors = {
+    command_not_found: 'badge-red',
+    path_not_found:    'badge-red',
+    permission_denied: 'badge-orange',
+    import_error:      'badge-orange',
+    syntax_error:      'badge-yellow',
+    exception:         'badge-yellow',
+    test_failure:      'badge-purple',
+    npm_error:         'badge-orange',
+    nonzero_exit:      'badge-yellow',
+    generic_error:     'badge-gray',
+  };
+  return `<span class="badge ${colors[cls] || 'badge-gray'}" style="font-size:10px">${label || cls}</span>`;
+}
+
+function renderFailures(data) {
+  const stats    = data.stats    || {};
+  const failures = data.recent_failures || [];
+  const loops    = data.loops    || [];
+  const waste    = data.waste    || [];
+
+  // KPIs
+  document.getElementById('fkpi-total').textContent        = fmt.num(stats.total_failures ?? 0);
+  document.getElementById('fkpi-loops').textContent        = fmt.num(stats.sessions_with_loops ?? 0);
+  document.getElementById('fkpi-waste-tokens').textContent = fmt.tokens(stats.total_waste_tokens ?? 0);
+  document.getElementById('fkpi-waste-cost').textContent   = fmt.cost(stats.total_waste_cost ?? 0);
+
+  // Failures table
+  const ftbody = document.getElementById('failuresTbody');
+  if (!failures.length) {
+    ftbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted" style="padding:20px">No failures detected yet.</td></tr>`;
+  } else {
+    ftbody.innerHTML = failures.slice(0, 25).map(f => {
+    const sid = f.session_id;
+    const sidEl = sid && sid !== 'unknown'
+      ? `<button class="btn btn-ghost btn-sm" onclick="openSession('${sid}')"
+           title="${sid}" style="font-family:monospace;font-size:10px">${sid.slice(0,10)}…</button>`
+      : `<span class="badge badge-gray" style="font-size:10px">—</span>`;
+    return `
+      <tr>
+        <td><span class="badge badge-purple" style="font-size:10px">${f.tool_name}</span></td>
+        <td>${errorBadge(f.error_class, f.error_label)}</td>
+        <td><div class="snippet">${(f.snippet || '').replace(/</g,'&lt;').replace(/>/g,'&gt;') || '—'}</div></td>
+        <td>${sidEl}</td>
+        <td class="text-muted" style="font-size:11px;white-space:nowrap">${fmt.date(f.timestamp)}</td>
+      </tr>`;
+  }).join('');
+  }
+
+  // Loops table
+  const ltbody = document.getElementById('loopsTbody');
+  if (!loops.length) {
+    ltbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted" style="padding:20px">No loops detected yet.</td></tr>`;
+  } else {
+    ltbody.innerHTML = loops.slice(0, 25).map(l => {
+    const countColor = l.call_count >= 8 ? 'var(--red)' : l.call_count >= 5 ? 'var(--yellow)' : 'var(--text)';
+    const failBadge  = l.failure_count > 0
+      ? `<span class="badge badge-red" style="font-size:10px">${l.failure_count}</span>`
+      : `<span class="badge badge-green" style="font-size:10px">0</span>`;
+    const sid = l.session_id;
+    const sidEl = sid && sid !== 'unknown'
+      ? `<button class="btn btn-ghost btn-sm" onclick="openSession('${sid}')"
+           title="${sid}" style="font-family:monospace;font-size:10px">${sid.slice(0,10)}…</button>`
+      : `<span class="badge badge-gray" style="font-size:10px">multi-session</span>`;
+    return `
+      <tr>
+        <td><span class="badge badge-purple" style="font-size:10px">${l.tool_name}</span></td>
+        <td style="text-align:right;font-weight:700;color:${countColor}">${l.call_count}</td>
+        <td style="text-align:right">${failBadge}</td>
+        <td>${sidEl}</td>
+        <td class="text-muted" style="font-size:11px;white-space:nowrap">${fmt.date(l.ended_at)}</td>
+      </tr>`;
+  }).join('');
+  }
+
+  // Waste breakdown table
+  const wtbody = document.getElementById('wasteTbody');
+  if (!waste.length) {
+    wtbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted" style="padding:20px">
+      No waste data yet — requires sessions with both a detected failure and subsequent API calls.
+    </td></tr>`;
+  } else {
+    wtbody.innerHTML = waste.map(w => {
+      const sid   = w.session_id;
+      const sidEl = `<button class="btn btn-ghost btn-sm" onclick="openSession('${sid}')"
+                       title="${sid}" style="font-family:monospace;font-size:10px">${sid.slice(0,10)}…</button>`;
+      const proj  = (w.project_path || '').replace(/^-Users-[^-]+-/, '').replace(/-/g, '/');
+      const tokCls  = w.tokens_after > 50000 ? 'text-red'    : w.tokens_after > 20000 ? 'text-yellow' : '';
+      const costCls = w.cost_after   > 0.05  ? 'text-red'    : w.cost_after   > 0.01  ? 'text-yellow' : '';
+      return `
+        <tr>
+          <td>${sidEl}</td>
+          <td class="mono text-muted" style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis"
+              title="${w.project_path}">${proj || '—'}</td>
+          <td>${errorBadge('generic_error', w.first_error)}</td>
+          <td class="text-muted" style="font-size:11px;white-space:nowrap">${fmt.date(w.first_failure_at)}</td>
+          <td style="text-align:right;color:var(--text2)">${fmt.num(w.api_calls_after)}</td>
+          <td style="text-align:right;font-weight:600" class="${tokCls}">${fmt.tokens(w.tokens_after)}</td>
+          <td style="text-align:right;font-weight:600" class="${costCls}">${fmt.cost(w.cost_after)}</td>
+        </tr>`;
+    }).join('');
+  }
 }
 
 // ── Stat cards — branches on plan ────────────────────────────────────────────
